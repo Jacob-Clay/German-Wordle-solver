@@ -1,9 +1,36 @@
 import tkinter as tk
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from functools import partial
+from pathlib import Path
+
+WORDS_FILE = Path("5words.txt")
+
 
 """
 A row of single-character entry boxes
 """
+
+
+def load_words(path: Path) -> list[str]:
+    """One word per line, UTF-8 blank lines skipped, lowercase once here."""
+    with path.open(encoding="utf-8") as f:
+        return [stripped.lower() for line in f if (stripped := line.strip())]
+
+
+def matches(word: str, pattern: str, required: str = "", excluded: str = "") -> bool:
+    """`pattern` uses '.' for unknown positions. Everything lowercase."""
+    if any(p != "." and p != w for p, w in zip(pattern, word, strict=True)):
+        return False
+    if any(r not in word for r in required):
+        return False
+    return all(e not in word for e in excluded)
+
+
+def find_matches(
+    pattern: str, words: Sequence[str], required: str = "", excluded: str = ""
+) -> list[str]:
+    pattern = pattern.lower()
+    return [w for w in words if matches(w, pattern, required, excluded)]
 
 
 class LettersInput(tk.Frame):
@@ -114,10 +141,52 @@ class LettersInput(tk.Frame):
         self._focus(0)
 
 
+class ResultsView(tk.Frame):
+    def __init__(self, parent: tk.Misc, height: int = 12):
+        super().__init__(parent)
+
+        self.status: tk.Label = tk.Label(
+            self, text="", font=("Helvetica", 11), anchor="w"
+        )
+        self.status.pack(fill="x", pady=(0, 6))
+
+        body = tk.Frame(self)
+        body.pack(fill="both", expand=True)
+
+        self.listbox: tk.Listbox = tk.Listbox(
+            body, height=height, font=("Helvetica", 13)
+        )
+        scroll = tk.Scrollbar(body, orient="vertical", command=self.listbox.yview)
+        _ = self.listbox.config(yscrollcommand=scroll.set)
+
+        scroll.pack(side="right", fill="y")
+        self.listbox.pack(side="left", fill="both", expand=True)
+
+    def show(self, pattern: str, words: Sequence[str]):
+        self.listbox.delete(0, "end")
+        self.listbox.insert("end", *words)
+        plural = "" if len(words) == 1 else "es"
+        _ = self.set_status(f"{pattern} - {len(words)} match{plural}")
+
+    def set_status(self, text: str):
+        _ = self.status.config(text=text)
+
+
+def search(pattern: str, words: Sequence[str], results: ResultsView):
+    results.show(pattern, find_matches(pattern, words))
+
+
 def main():
+    try:
+        words = load_words(WORDS_FILE)
+        loaded = f"{len(words)} words loaded"
+    except OSError:
+        words = []
+        loaded = f"Could not read {WORDS_FILE}"
+
     root = tk.Tk()
     root.title("German Wordle Solver")
-    root.geometry("300x120")
+    root.geometry("440x520")
 
     tk.Label(root, text="Enter all Green Letters", font=("Helvetica", 14)).pack(
         pady=(20, 12)
@@ -126,22 +195,19 @@ def main():
     greens = LettersInput(root)
     greens.pack()
 
-    result = tk.Label(root, text="", font=("Helvetica", 12))
-
-    def submit(pattern: str):
-        _ = result.config(text=f"Pattern: {pattern}")
-
-    greens.on_submit = submit
+    results = ResultsView(root)
+    run = partial(search, words=words, results=results)
+    greens.on_submit = run
 
     buttons = tk.Frame(root)
     buttons.pack(pady=18)
-
-    tk.Button(buttons, text="Submit", command=lambda: submit(greens.get())).pack(
+    tk.Button(buttons, text="Submit", command=lambda: run(greens.get())).pack(
         side="left", padx=6
     )
     tk.Button(buttons, text="Clear", command=greens.clear).pack(side="left", padx=6)
 
-    result.pack()
+    results.pack(fill="both", expand=True, padx=24, pady=(0, 24))
+    results.set_status(loaded)
 
     greens.boxes[0].focus_set()
     root.mainloop()
